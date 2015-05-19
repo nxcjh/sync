@@ -44,21 +44,6 @@ public class KafkaUtils {
 	 * @param clientName
 	 * @return
 	 */
-	public static long getLastOffset(SimpleConsumer consumer, String topic, int partition,long whichTime, String clientName) {
-		TopicAndPartition topicAndPartition = new TopicAndPartition(topic, partition);
-		Map<TopicAndPartition, PartitionOffsetRequestInfo> requestInfo = new HashMap<TopicAndPartition, PartitionOffsetRequestInfo>();
-		requestInfo.put(topicAndPartition, new PartitionOffsetRequestInfo(whichTime, 1));
-		kafka.javaapi.OffsetRequest request = new kafka.javaapi.OffsetRequest(requestInfo, kafka.api.OffsetRequest.CurrentVersion(), clientName);
-		OffsetResponse response = consumer.getOffsetsBefore(request);
-
-		if (response.hasError()) {
-		  System.out.println("Error fetching data Offset Data the Broker. Reason: " + response.errorCode(topic, partition) );
-		  return 0;
-		}
-		long[] offsets = response.offsets(topic, partition);
-		return offsets[0];
-		}
-	
 	 public static long getOffset(SimpleConsumer consumer, String topic, int partition) {
 	        long startOffsetTime = kafka.api.OffsetRequest.LatestTime();
 	        if (ConsumerConfig.forceFromStart) {
@@ -68,7 +53,14 @@ public class KafkaUtils {
 	    }
 	 
 	 public static long getOffset(SimpleConsumer consumer, String topic, int partition, long startOffsetTime) {
-	        TopicAndPartition topicAndPartition = new TopicAndPartition(topic, partition);
+	     
+		 ///////////////////////
+		 
+		 
+		 //////////////////////////
+		 
+		 
+		 TopicAndPartition topicAndPartition = new TopicAndPartition(topic, partition);
 	        Map<TopicAndPartition, PartitionOffsetRequestInfo> requestInfo = new HashMap<TopicAndPartition, PartitionOffsetRequestInfo>();
 	        requestInfo.put(topicAndPartition, new PartitionOffsetRequestInfo(startOffsetTime, 1));
 	        OffsetRequest request = new OffsetRequest(
@@ -80,6 +72,8 @@ public class KafkaUtils {
 	            return NO_OFFSET;
 	        }
 	    }
+	 
+	 
 
 	public static ByteBufferMessageSet fetchMessages(SimpleConsumer consumer,int partitionId, long offset) throws UpdateOffsetException {
 		ByteBufferMessageSet msgs = null;
@@ -121,5 +115,14 @@ public class KafkaUtils {
         }
         return msgs;
     }
+	
+	
+	public static String getClientId(String client, String partitionid){
+		return "Client_"+client+"_"+partitionid;
+	}
+	
+	public static void main(String[] args) {
+		
+	}
 
 }

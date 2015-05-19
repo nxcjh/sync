@@ -1,23 +1,26 @@
 package com.autohome.sync.syncCluster.consumers;
 
+import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.SortedSet;
 import java.util.TreeSet;
 
+import backtype.storm.utils.Utils;
 
-
-
-
-
+import com.autohome.KafkaProducer;
+import com.autohome.sync.syncCluster.producers.ProducerConf;
+import com.autohome.sync.syncCluster.producers.SyncProducer;
 import com.autohome.sync.syncCluster.tools.DynamicPartitionConnections;
-import com.autohome.sync.syncCluster.tools.MessageAndRealOffset;
+import com.autohome.sync.syncCluster.tools.UpdateOffsetException;
 import com.autohome.sync.syncCluster.tools.ZKState;
 
 import kafka.javaapi.consumer.SimpleConsumer;
 import kafka.javaapi.message.ByteBufferMessageSet;
+import kafka.message.Message;
 import kafka.message.MessageAndOffset;
+import kafka.producer.KeyedMessage;
 
 
 public class ConsumerReplica implements Runnable{
@@ -26,152 +29,212 @@ public class ConsumerReplica implements Runnable{
     SortedSet<Long> _pending = new TreeSet<Long>();
     SortedSet<Long> failed = new TreeSet<Long>();
     Long _committedTo;	//已经写入zk的offset
-    LinkedList<MessageAndRealOffset> _waitingToEmit = new LinkedList<MessageAndRealOffset>();
+    LinkedList<MessageAndOffset> _waitingToEmit = new LinkedList<MessageAndOffset>();
     int _partition;
-   
+    String _curoffset;
+    Long currentOffset ;
     String _topologyInstanceId;
     SimpleConsumer _consumer;
     DynamicPartitionConnections _connections;
     ZKState _state;
     Map _stormConf;
-    
-    
-	public ConsumerReplica(Map<Integer,ConnectionInfo> connections,String topologyInstanceId,int partitionid,DynamicBrokersReader _reader) {
-		 _partition = partitionid;
-		 String jsonTopologyId = null;
-	     Long jsonOffset = null;
-		 String path = committedPath();
-		 _consumer = connections.get(partitionid).consumer;
-		 try {
-			 Map<Object, Object> json = _reader.readJSON(path);
-			 System.out.println(("Read partition information from: " + path +  "  --> " + json ));
-			 if (json != null) {
-	             jsonTopologyId = (String) ((Map<Object, Object>) json.get("topology")).get("id");
-	             jsonOffset = (Long) json.get("offset");// 从zk中读出commited offset
-	         }
-		  } catch (Throwable e) {
-	            System.out.println("Error reading and/or parsing at ZkNode: " + path+"\n"+e.getMessage());
-	      }
-		 
-		 Long currentOffset = KafkaUtils.getOffset(_consumer, ConsumerConfig.topics, partitionid);
-		 
-		 if (jsonTopologyId == null || jsonOffset == null) { // failed to parse JSON?
-        	 // zk中没有记录，那么根据spoutConfig.startOffsetTime设置offset，Earliest或Latest
-            _committedTo = currentOffset;
-            System.out.println("No partition information found, using configuration to determine offset");
-        } else if (!topologyInstanceId.equals(jsonTopologyId) && ConsumerConfig.forceFromStart) {
-            _committedTo = KafkaUtils.getOffset(_consumer, ConsumerConfig.topics, partitionid, ConsumerConfig.startOffsetTime);
-            System.out.println("Topology change detected and reset from start forced, using configuration to determine offset");
-        } else {
-            _committedTo = jsonOffset;
-            System.out.println("Read last commit offset from zookeeper: " + _committedTo + "; old topology_id: " + jsonTopologyId + " - new topology_id: " + topologyInstanceId );
-        }
-		 /*
-	         * 下面这个if判断是如果当前读取的offset值与提交到zk的值不一致, 且相差Long.MAX_VALUE, 就认为中间很大部分msg发射了没有提交, 
-	         * 就把这部分全部放弃, 避免重发
-	         * 令_committedTo = currentOffset, 这个是新修复的bug, 之前maxOffsetBehind=10000(这个值太小) bug-isuue STORM-399
-	         */
-	        if (currentOffset - _committedTo > ConsumerConfig.maxOffsetBehind || _committedTo <= 0) {
-	             System.out.println("Last commit offset from zookeeper: " + _committedTo);
-	            _committedTo = currentOffset;// 初始化时，中间状态都是一致的
-	             System.out.println("Commit offset " + _committedTo + " is more than " +
-	                    ConsumerConfig.maxOffsetBehind + " behind, resetting to startOffsetTime=" + ConsumerConfig.startOffsetTime);
-	        }
-	         System.out.println("Starting Kafka " + _consumer.host() + ":" + partitionid + " from offset " + _committedTo);
-	        _emittedToOffset = _committedTo;
+    List<kafka.producer.KeyedMessage<String, Message>> list = null;
+    private SyncProducer producer;
+    long lastRefreshTimeMs;
+    long refreshMillis;
+    DynamicBrokersReader _reader;
+    String path;
+
+	/**
+	 * 1. zookeeper上面存储offset的路径为: /sync/consumers/topics/[topic]/offset/0...n
+	 * 
+	 * @param connections
+	 * @param topologyInstanceId
+	 * @param partitionid
+	 * @param _reader
+	 */
+	public ConsumerReplica(Map<Integer, ConnectionInfo> connections,
+			String topologyInstanceId, int partitionid,
+			DynamicBrokersReader reader) {
+		_partition = partitionid;
+
+		_reader = reader;
+		path = committedPath(); // 存储offset的zk路径
+		_consumer = connections.get(partitionid).consumer; // 获取SimpleConsumer
+		try {
+
+			_curoffset = _reader.fetchOffset(path);
+			if (_curoffset != null) {
+				currentOffset = Long.parseLong(_curoffset); // 把zk上保存的offset写入本地
+			} else {
+				// 如果zk上不存在offset, 则使用此partition最早的offset
+				currentOffset = KafkaUtils.getOffset(_consumer,
+						ConsumerConfig.topics, _partition,
+						ConsumerConfig.startOffsetTime);
+			}
+			System.out.println(("Read partition offset from: " + path
+					+ "  --> " + currentOffset));
+		} catch (Throwable e) {
+			
+			System.out.println("Error reading and/or parsing at ZkNode: "
+					+ path + "\n" + e.getMessage());
+		}
+
+		long earliestOffset = KafkaUtils.getOffset(_consumer,
+				ConsumerConfig.topics, _partition,
+				ConsumerConfig.startOffsetTime);//ConsumerConfig.startOffsetTime
+		/**
+		 * 如果从zk中读取到的currentOffset比partition中的earlyOffset小, 则进行置换
+		 */
+		if (currentOffset - earliestOffset < 0 || currentOffset < 0) {
+			currentOffset = earliestOffset;
+			System.out.println("Starting Kafka " + _consumer.host() + ":"
+					+ partitionid + " from offset " + currentOffset);
+		}
+//		producer = new KafkaProducer();
+		producer = new SyncProducer();
+		producer.init();
+		_committedTo = currentOffset;
+		list = new ArrayList<kafka.producer.KeyedMessage<String, Message>>();
+		refreshMillis = ConsumerConfig.refreshFreqSecs * 1000L;
 	}
-    
-    
+	    
+    /**
+     * 从kafka上消费数据
+     */
 	private void fill() {
         long start = System.nanoTime();
-        long offset;
-        //首先要判断是否有fail的offset, 如果有的话, 在需要从这个offset开始往下去读取message,所以这里有重发的可能.
-        final boolean had_failed = !failed.isEmpty();
-
-        // Are there failed tuples? If so, fetch those first.
-        if (had_failed) {
-            offset = failed.first();
-        } else {
-            offset = _emittedToOffset;//取失败的最小的offset值
+        long currTime = System.currentTimeMillis();
+		_committedTo = currentOffset;
+        //按60秒对offset进行更新
+        if (currTime > lastRefreshTimeMs + refreshMillis) {
+        	//把offset更新到zookeeper
+        	_reader.writeBytes(path, (_committedTo+"").getBytes());
+        	lastRefreshTimeMs = currTime;
         }
-
+        _committedTo = currentOffset;
         ByteBufferMessageSet msgs = null;
         try {
-            msgs = KafkaUtils.fetchMessages( _consumer, _partition, offset);
-            
-        } catch (Exception e) {//UpdateOffsetException e
+            msgs = KafkaUtils.fetchMessages( _consumer, _partition, _committedTo);
+        } catch (UpdateOffsetException e) {
             _emittedToOffset = KafkaUtils.getOffset(_consumer, ConsumerConfig.topics, _partition);
             System.out.println("Using new offset: {}"+ _emittedToOffset);
-            // fetch failed, so don't update the metrics
             return;
         }
-        
         long end = System.nanoTime();
         long millis = (end - start) / 1000000;
         if (msgs != null) {
-            int numMessages = 0;
-
+            //遍历读取到的消息集
             for (MessageAndOffset msg : msgs) {
-                final Long cur_offset = msg.offset();
-                if (cur_offset < offset) {
-                    // Skip any old offsets.
-                    continue;
-                }
-                     
-                /**
-                 * 只要是没有失败的或者失败的set中含有该offset(因为失败msg有很多,我们只是从最小的offset开始读取msg的),就把这个message放到带发射的list中
-                 */
-                if (!had_failed || failed.contains(cur_offset)) {
-                    numMessages += 1;
-                    _pending.add(cur_offset);
-                    _waitingToEmit.add(new MessageAndRealOffset(msg.message(), cur_offset));
-                    _emittedToOffset = Math.max(msg.nextOffset(), _emittedToOffset);
-                    if (had_failed) {
-                    	System.out.println(cur_offset);
-                        failed.remove(cur_offset);// 如果失败列表中含有该offset，就移除，因为要重新发射了。
-                    }
+                final Long cur_offset = msg.offset();//当前消息的offset偏移量
+                _waitingToEmit.add(msg);	//把数据放入队列中
+                currentOffset += 1;// 把当前offset存入本地
                 }
             }
+        
+        System.out.println("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^");
         }
-    }
-    
+	int count = 0;
+	
+	
+	
 	
 	public void next(){
+		int numMessages = 0;
+		System.out.println("###############################"+count++);
 		while(true){
 			 if (_waitingToEmit.isEmpty()) {
+				 System.out.println("*********************************");
 		            fill();//开始读取message
 		        }
-			 while (true) {
-		            MessageAndRealOffset toEmit = _waitingToEmit.pollFirst();//每次读取一条
+			 
+			 while (true) {//numMessages <= ProducerConf.BATCH_NUM_VALUE
+				 MessageAndOffset toEmit = _waitingToEmit.pollFirst();//每次读取一条
 		            if (toEmit == null) {
-		               continue;
-		            }		            
-		            //发送数据
-		            //可以看看转换tuple的过程， 可以看到是通过kafkaConfig.scheme.deserialize来做转换
-//		            Iterable<List<Object>> tups = KafkaUtils.generateTuples(_spoutConfig, toEmit.msg);
-//		            if (tups != null) {
-//		                for (List<Object> tup : tups) {
-//		                    collector.emit(tup, new KafkaMessageId(_partition, toEmit.offset));
-//		                }
-//		                break;//这里就是没成功发射一条msg, 就break掉, 返回emitstate给kafkaSpout的nextTuple中做判断和定时commit成功处理的offset到zk
-//		            } else {
-////		                ack(toEmit.offset);//ack 做清楚工作
-//		            }
-		        }
-		}
-		
+		            	if(list.size()>0){
+		            		sendData(list);
+		            	}
+		            	System.out.println("%%%%%%%%%%%%%%%%%%%%%%%%%%%%%");
+		            	break;  
+		            }
+	            	numMessages += 1;
+	            	System.out.println(new String(Utils.toByteArray(toEmit.message().payload())));
+	            	KeyedMessage<String, Message> data = new KeyedMessage<String, Message>("sync_1",toEmit.message());
+	            	list.add(data);
+		           
+	            	if(list.size() == ProducerConf.BATCH_NUM_VALUE){
+	            		sendData(list);
+	            		numMessages = 0;
+	            	}	
+		       }
+		 }
 	}
+	
+	/**
+	 * producer发送数据
+	 * @param oList
+	 */
+	public void sendData(List<kafka.producer.KeyedMessage<String, Message>> oList){
+		try{
+			producer.send(list);
+			list.clear();
+		}catch(Exception e){
+			System.out.println("Kafka Producer send Error!");
+			try {
+				Thread.sleep(500);
+			} catch (InterruptedException e1) {
+				e1.printStackTrace();
+			}
+		}
+	}
+	
+	
+	
     
+	/**
+	 * zk上存储offset数据的路径
+	 * @return
+	 */
 	private String committedPath() {
-        return "";
+        return "/consumers/demo/offsets/"+ConsumerConfig.topics+"/"+_partition;
     }
 
-
-	@Override
 	public void run() {
-		next();
-		
+//
+//		int numMessages = 0;
+//		System.out.println("###############################"+count++);
+//		while(true){
+//			 if (_waitingToEmit.isEmpty()) {
+//				 System.out.println("*********************************");
+//		            fill();//开始读取message
+//		        }
+//			 
+//			 while (true) {//numMessages <= ProducerConf.BATCH_NUM_VALUE
+//				 MessageAndOffset toEmit = _waitingToEmit.pollFirst();//每次读取一条
+//		            if (toEmit == null) {
+//		            	if(list.size()>0){
+//		            		sendData(list);
+//		            	}
+//		            	System.out.println("%%%%%%%%%%%%%%%%%%%%%%%%%%%%%");
+//		            	break;  
+//		            }
+//	            	numMessages += 1;
+//	            	System.out.println(new String(Utils.toByteArray(toEmit.message().payload())));
+//	            	KeyedMessage<String, Message> data = new KeyedMessage<String, Message>("sync_1",toEmit.message());
+//	            	list.add(data);
+//		           
+//	            	if(list.size() == ProducerConf.BATCH_NUM_VALUE){
+//	            		sendData(list);
+//	            		numMessages = 0;
+//	            	}	
+//		       }
+//		 }
+//	
+//		
+		System.out.println("0000000000000000000000000000000000000");
 	}
+	
+	
     
     
 }

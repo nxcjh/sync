@@ -96,7 +96,7 @@ public class DynamicBrokersReader {
 	     * @param contents
 	     * @return
 	     */
-	    public static   Broker getBrokerHost(byte[] contents) {
+	    public static Broker getBrokerHost(byte[] contents) {
 	        try {
 	            Map<Object, Object> value = (Map<Object, Object>) JSONValue.parse(new String(contents, "UTF-8"));
 	            String host = (String) value.get("host");
@@ -147,7 +147,7 @@ public class DynamicBrokersReader {
 	     * @param partition
 	     * @return
 	     */
-	    public static   int getLeaderFor(long partition) {
+	    public static  int getLeaderFor(long partition) {
 	        try {
 	            String topicBrokersPath = partitionPath();
 	            byte[] hostPortData = _curator.getData().forPath(topicBrokersPath + "/" + partition + "/state");
@@ -215,7 +215,7 @@ public class DynamicBrokersReader {
 	    
 	    
 	    
-	    public static   void writeBytes(String path, byte[] bytes) {
+	    public void writeBytes(String path, byte[] bytes) {
 	        try {
 	            if (_curator.checkExists().forPath(path) == null) {
 	                _curator.create()
@@ -236,10 +236,34 @@ public class DynamicBrokersReader {
 	     * @param path
 	     * @param data
 	     */
-	    public static   void writeJSON(String path, Map<Object, Object> data) {
+	    public void writeJSON(String path, Map<Object, Object> data) {
 	       System.out.println("Writing " + path + " the data " + data.toString());
 	        writeBytes(path, JSONValue.toJSONString(data).getBytes(Charset.forName("UTF-8")));
 	    }
+	    
+	    
+	    
+	    /**
+	     * 获取指定partition分区的offset
+	     * @param partition_id
+	     * @return
+	     * @throws NumberFormatException
+	     * @throws UnsupportedEncodingException
+	     */
+	    public static String fetchOffset(String path) throws NumberFormatException, UnsupportedEncodingException{
+	    	byte[] data = readBytes(path);
+	    	if(data == null){
+	    		return null;
+	    	}
+	    		return new String(readBytes(path),"UTF-8");
+	    	
+	    	
+	    }
+	    
+	    public static String offsetPath(int partition_id){
+	    	return "/consumers/demo/offsets/"+_topic+"/"+partition_id;
+	    }
+
 	    
 	    public static void main(String[] args) throws Exception {
 	    	DynamicBrokersReader zkc = new DynamicBrokersReader("10.168.100.182:2181","kafka-replica");
@@ -257,6 +281,8 @@ public class DynamicBrokersReader {
 	    	System.out.println(getBrokerId("node2.auto.com"));
 	    	System.out.println(getBrokerInfo());
 	    	System.out.println(getPartitions(4,0));
+	    	String str = new String(readBytes("/consumers/demo/offsets/kafka-replica/0"),"UTF-8");
+	    	System.out.println(str);
 	    	zkc.close();
 		}
 }

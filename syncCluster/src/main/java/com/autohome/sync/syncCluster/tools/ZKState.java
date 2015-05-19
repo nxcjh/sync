@@ -5,6 +5,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import kafka.utils.Utils;
+
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.framework.CuratorFrameworkFactory;
 import org.apache.curator.retry.RetryNTimes;
@@ -17,42 +19,15 @@ import org.json.simple.JSONValue;
 public class ZKState {
 	CuratorFramework _curator;
 	
-	private CuratorFramework newCurator(Map stateConf) {
-	
-		 Integer port = (Integer) stateConf.get(Config.TRANSACTIONAL_ZOOKEEPER_PORT);
-	        String serverPorts = "";
-	        
-	        for (String server : (List<String>) stateConf.get(Config.TRANSACTIONAL_ZOOKEEPER_SERVERS)) {
-	            serverPorts = serverPorts + server + ":" + port + ",";
-	        }
-	        return CuratorFrameworkFactory.newClient(serverPorts,
-	                Utils.getInt(stateConf.get(Config.STORM_ZOOKEEPER_SESSION_TIMEOUT)),
-	                15000,
-	                new RetryNTimes(Utils.getInt(stateConf.get(Config.STORM_ZOOKEEPER_RETRY_TIMES)),
-	                        Utils.getInt(stateConf.get(Config.STORM_ZOOKEEPER_RETRY_INTERVAL))));
-	}
-	
-	
-	
-	
-	
-	
-	
+
+
 	
 	public CuratorFramework getCurator() {
         assert _curator != null;
         return _curator;
     }
 
-    public ZKState(Map stateConf) {
-        stateConf = new HashMap(stateConf);
-        try {
-            _curator = newCurator(stateConf);
-            _curator.start();
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
-    }
+ 
 
     public void writeJSON(String path, Map<Object, Object> data) {
         System.out.println("Writing " + path + " the data " + data.toString());

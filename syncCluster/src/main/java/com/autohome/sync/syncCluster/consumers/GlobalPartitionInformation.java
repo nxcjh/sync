@@ -18,7 +18,7 @@ public class GlobalPartitionInformation implements Iterable<Partition>, Serializ
         partitionMap.put(partitionId, broker);
     }
 
-    @Override
+    
     public String toString() {
         return "GlobalPartitionInformation{" +
                 "partitionMap=" + partitionMap +
@@ -37,35 +37,35 @@ public class GlobalPartitionInformation implements Iterable<Partition>, Serializ
         return partitions;
     }
 
-    @Override
+    
     public Iterator<Partition> iterator() {
         final Iterator<Map.Entry<Integer, Broker>> iterator = partitionMap.entrySet().iterator();
 
         return new Iterator<Partition>() {
-            @Override
+            
             public boolean hasNext() {
                 return iterator.hasNext();
             }
 
-            @Override
+            
             public Partition next() {
                 Map.Entry<Integer, Broker> next = iterator.next();
                 return new Partition(next.getValue(), next.getKey());
             }
 
-            @Override
+            
             public void remove() {
                 iterator.remove();
             }
         };
     }
 
-    @Override
+    
     public int hashCode() {
         return Objects.hashCode(partitionMap);
     }
 
-    @Override
+    
     public boolean equals(Object obj) {
         if (this == obj) {
             return true;
