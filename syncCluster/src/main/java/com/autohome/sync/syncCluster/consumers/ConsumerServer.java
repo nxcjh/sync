@@ -19,6 +19,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
+import org.apache.log4j.Logger;
 import com.autohome.sync.syncCluster.tools.Configuration;
 
 import kafka.javaapi.consumer.SimpleConsumer;
@@ -30,7 +31,7 @@ import kafka.javaapi.consumer.SimpleConsumer;
  *
  */
 public class ConsumerServer {
-
+	private static final Logger LOG = Logger.getLogger(ConsumerServer.class);
 	DynamicBrokersReader _reader; // 操作zookeeper信息类
 	int numPartitions; // 获得指定topic的所有分区数
 	String hostName; // 本机主机名
@@ -61,6 +62,7 @@ public class ConsumerServer {
 			conMap.put(i, new ConnectionInfo(i, new SimpleConsumer(hostName,
 					9092, conf.getSocketTimeoutMs(), conf.getBufferSizeBytes(),
 					KafkaUtils.getClientId(conf.getClientId(), i + ""))));
+			LOG.info(KafkaUtils.getClientId(conf.getClientId(), i + "")+", HostName:"+hostName +" create SimpleConsumer for topic:"+conf.getTopics() +", partition: "+i);
 		}
 		executor = Executors.newFixedThreadPool(partitions.size());
 	}
@@ -81,7 +83,8 @@ public class ConsumerServer {
 //			brokerId = _reader.getBrokerId("node2.auto.com");
 			partitions = _reader.getPartitions(numPartitions,
 					Integer.parseInt(brokerId));
-		} catch (UnknownHostException e) {
+		} catch (UnknownHostException e) {			
+			LOG.error("unknownhost error!",e);
 			e.printStackTrace();
 		}
 		return partitions;
@@ -96,12 +99,12 @@ public class ConsumerServer {
 		for (Integer i : partitions) {
 			Runnable runner = new ConsumerReplica(this, conMap, i, _reader,
 					conf);
-			System.out.println(conf.getTopics() + ":  partition=" + i
+			LOG.info(conf.getTopics() + ":  partition=" + i
 					+ " is running....");
 			executor.execute(runner);
-		}
+	}
 
-		// executor.execute(new ConsumerReplica(server,conMap,0,_reader,conf));
+//		 executor.execute(new ConsumerReplica(server,conMap,1,_reader,conf));
 		scheduledExecutorService.scheduleAtFixedRate(new SchedulerTask(), 0,
 				30, TimeUnit.SECONDS);
 		// scheduledExecutorService.scheduleAtFixedRate(new SchedulerTask2(),
@@ -119,7 +122,7 @@ public class ConsumerServer {
 			;// 得到配置文件的名字
 			while (enum1.hasMoreElements()) {
 				String strKey = (String) enum1.nextElement();
-				System.out.println("server.properties " + strKey + "="
+				LOG.info("server.properties " + strKey + "="
 						+ prop.getProperty(strKey));
 			}
 			// 设置配置属性
@@ -151,6 +154,7 @@ public class ConsumerServer {
 	}
 
 	public void restart() {
+		LOG.info("Restart the server.");
 		ConsumerServer.isSync = false;
 		shutdown();
 		try {
@@ -163,7 +167,6 @@ public class ConsumerServer {
 			open();
 			start(this);
 		} catch (UnknownHostException e) {
-			// TODO Auto-generated catch block
 			e.printStackTrace();
 		}
 	}
@@ -211,7 +214,7 @@ public class ConsumerServer {
 		confPath = args[0];
 		server.open();
 		server.start(server);
-		// server.shutdown();
+
 	}
 
 }

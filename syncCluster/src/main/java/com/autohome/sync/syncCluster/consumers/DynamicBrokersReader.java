@@ -12,15 +12,17 @@ import java.util.Set;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.framework.CuratorFrameworkFactory;
 import org.apache.curator.retry.RetryNTimes;
+import org.apache.log4j.Logger;
 import org.apache.zookeeper.CreateMode;
 import org.json.simple.JSONValue;
+
 
 
 
 public class DynamicBrokersReader {
 
 	
-	
+	private static final Logger LOG = Logger.getLogger(DynamicBrokersReader.class);
 	 private static CuratorFramework _curator;
 	    private static String _topic;
 	    private final static int STORM_ZOOKEEPER_SESSION_TIMEOUT = 10000;
@@ -41,7 +43,7 @@ public class DynamicBrokersReader {
 	                    new RetryNTimes(STORM_ZOOKEEPER_RETRY_TIMES,STORM_ZOOKEEPER_RETRY_INTERVAL));
 	            _curator.start();
 	        } catch (Exception ex) {
-	            System.err.println("Couldn't connect to zookeeper: \n"+ex);
+	           LOG.info("Couldn't connect to zookeeper: \n"+ex);
 	        }
 	    }
 
@@ -76,7 +78,7 @@ public class DynamicBrokersReader {
 	                    Broker hp = getBrokerHost(brokerData);
 	                    globalPartitionInformation.addPartition(partition, hp);
 	                } catch (org.apache.zookeeper.KeeperException.NoNodeException e) {
-	                    System.err.println("Node {} does not exist \n"+path);
+	                   LOG.info("Node {} does not exist \n"+path);
 	                }
 	            }
 	        } catch (SocketTimeoutException e) {
@@ -84,7 +86,7 @@ public class DynamicBrokersReader {
 	        } catch (Exception e) {
 	            throw new RuntimeException(e);
 	        }
-	       System.err.println("Read partition info from zookeeper: " + globalPartitionInformation);
+	      LOG.info("Read partition info from zookeeper: " + globalPartitionInformation);
 	        return globalPartitionInformation;
 	    }
 	    

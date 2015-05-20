@@ -1,20 +1,17 @@
 package com.autohome.sync.syncCluster.consumers;
 
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
-import java.util.SortedSet;
-import java.util.TreeSet;
 
-import backtype.storm.utils.Utils;
+import org.apache.log4j.Logger;
 
 import com.autohome.sync.syncCluster.producers.ProducerConf;
 import com.autohome.sync.syncCluster.producers.SyncProducer;
 import com.autohome.sync.syncCluster.tools.Configuration;
-import com.autohome.sync.syncCluster.tools.DynamicPartitionConnections;
 import com.autohome.sync.syncCluster.tools.UpdateOffsetException;
-import com.autohome.sync.syncCluster.tools.ZKState;
 
 import kafka.javaapi.consumer.SimpleConsumer;
 import kafka.javaapi.message.ByteBufferMessageSet;
@@ -23,24 +20,26 @@ import kafka.message.MessageAndOffset;
 import kafka.producer.KeyedMessage;
 
 public class ConsumerReplica implements Runnable {
-
+	private static final Logger LOG = Logger.getLogger(ConsumerReplica.class);
 	private Long _emittedToOffset; // 从kafka读到的offset,
 	// 从kafka读到的messages会放入_waitingToEmit,放入这个list,
 	// 我们就认为一定会被emit,
 	// 所以emittedToOffset可以认为是从kafka读到的offset.
-	private Long _committedTo; // 已经写入zk的offset
+	private long commitOffset;
 	private LinkedList<MessageAndOffset> _waitingToEmit = new LinkedList<MessageAndOffset>();
 	private int _partition;
 	private String _curoffset;
 	private Long currentOffset;
 	private SimpleConsumer _consumer;
-	private List<kafka.producer.KeyedMessage<String, Message>> list = null;
+	private List<kafka.producer.KeyedMessage<String, String>> list = null;
 	private SyncProducer producer;
 	private long lastRefreshTimeMs;
 	private long refreshMillis;
 	private DynamicBrokersReader _reader;
 	private String path;
 	private Configuration _conf;
+	private long payloadCount = 0;
+	private long cacheTimeMillis = 0;
 
 	/**
 	 * 1. zookeeper上面存储offset的路径为: /sync/consumers/topics/[topic]/offset/0...n
@@ -68,11 +67,12 @@ public class ConsumerReplica implements Runnable {
 						_conf.getTopics(), _partition,
 						_conf.getStartOffsetTime());
 			}
-			System.out.println(("Read partition offset from: " + path
+			LOG.info(("Read partition offset from: " + path
 					+ "  --> " + currentOffset));
 		} catch (Throwable e) {
-			System.out.println("Error reading and/or parsing at ZkNode: "
-					+ path + "\n" + e.getMessage());
+			LOG.error("Error reading and/or parsing at ZkNode: "
+					+ path + "\n" , e);
+			
 			for (int triesnum = 1; triesnum < 4; triesnum++) {
 				triesnum += 1;
 				try {
@@ -91,8 +91,7 @@ public class ConsumerReplica implements Runnable {
 					if (triesnum == 4) {
 						server.shutdown();
 					}
-					System.out
-							.println("Retry reading and/or parsing at ZkNode: "
+					LOG.info("Retry reading and/or parsing at ZkNode: "
 									+ path + " for " + triesnum + " times \n");
 				}
 			}
@@ -105,14 +104,13 @@ public class ConsumerReplica implements Runnable {
 		 */
 		if (currentOffset - earliestOffset < 0 || currentOffset < 0) {
 			currentOffset = earliestOffset;
-			System.out.println("Starting Kafka " + _consumer.host() + ":"
+			LOG.info("Starting Kafka " + _consumer.host() + ":"
 					+ partitionid + " from offset " + currentOffset);
 		}
 		// producer = new KafkaProducer();
 		producer = new SyncProducer();
 		producer.init();
-		_committedTo = currentOffset;
-		list = new ArrayList<kafka.producer.KeyedMessage<String, Message>>();
+		list = new ArrayList<kafka.producer.KeyedMessage<String, String>>();
 		refreshMillis = _conf.getRefreshFreqSecs() * 1000L;
 	}
 
@@ -120,22 +118,14 @@ public class ConsumerReplica implements Runnable {
 	 * 从kafka上消费数据
 	 */
 	private void fill() {
-		long currTime = System.currentTimeMillis();// 当前时间毫秒数
-		_committedTo = currentOffset;
-		// 按60秒对offset进行更新
-		if (currTime > lastRefreshTimeMs + refreshMillis) {
-			// 把offset更新到zookeeper
-			_reader.writeBytes(path, (_committedTo + "").getBytes());
-			lastRefreshTimeMs = currTime;
-		}
-		_committedTo = currentOffset;
+		commitOffset = currentOffset;
 		ByteBufferMessageSet msgs = null;
 		try {
 			msgs = KafkaUtils.fetchMessages(_conf, _consumer, _partition,
-					_committedTo);
+					currentOffset);
 		} catch (UpdateOffsetException e) {
-			_reader.writeBytes(path, (_committedTo + "").getBytes());
-			System.out.println("Using new offset: {}" + _emittedToOffset);
+			_reader.writeBytes(path, (currentOffset + "").getBytes());
+			LOG.error("Using new offset: {}" + _emittedToOffset);
 			return;
 		}
 		if (msgs != null) {
@@ -146,8 +136,25 @@ public class ConsumerReplica implements Runnable {
 				currentOffset += 1;// 把当前offset存入本地
 			}
 		}
-
-		System.out.println("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^");
+	}
+	
+	/**
+	 * 限速
+	 * @param currTime
+	 */
+	public void splitlimit(long currTime){
+		if((currTime - cacheTimeMillis)/1000 >= 60){
+			if(payloadCount/1024/1024 > 10){
+				try {
+					Thread.sleep(1000);
+				} catch (InterruptedException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
+			}
+			payloadCount = 0l;
+			cacheTimeMillis = currTime;
+		}
 	}
 
 	/**
@@ -156,19 +163,27 @@ public class ConsumerReplica implements Runnable {
 	 * @param oList
 	 */
 	public void sendData(
-			List<kafka.producer.KeyedMessage<String, Message>> oList) {
+			List<kafka.producer.KeyedMessage<String, String>> oList) {
 		try {
+			long currTime = System.currentTimeMillis();// 当前时间毫秒数
+			splitlimit(currTime);
 			producer.send(list);
+			LOG.info(_conf.getTopics() +" : "+_partition+" producer send to :"+commitOffset +" msgs.");
 			list.clear();
+			
+			// 按60秒对offset进行更新
+			if (currTime > lastRefreshTimeMs + refreshMillis) {
+				// 把offset更新到zookeeper
+				_reader.writeBytes(path, (currentOffset + "").getBytes());
+				lastRefreshTimeMs = currTime;
+			}
+
 		} catch (Exception e) {
-			System.out.println("Kafka Producer send Error!");
-			try {
-				Thread.sleep(500);
-			} catch (InterruptedException e1) {
-				e1.printStackTrace();
+			LOG.error("Kafka Producer send Error!");
+			_reader.writeBytes(path, (currentOffset-list.size() + "").getBytes());
 			}
 		}
-	}
+	
 
 	/**
 	 * zk上存储offset数据的路径
@@ -183,34 +198,53 @@ public class ConsumerReplica implements Runnable {
 	public void run() {
 
 		int numMessages = 0;
-		System.out.println("###############################");
+		int nullcount = 0;
+		try{
 		while (ConsumerServer.isSync) {
 			if (_waitingToEmit.isEmpty()) {
-				System.out.println("*********************************");
 				fill();// 开始读取message
 			}
 			while (true) {// numMessages <= ProducerConf.BATCH_NUM_VALUE
 				MessageAndOffset toEmit = _waitingToEmit.pollFirst();// 每次读取一条
 				if (toEmit == null) {
+					
 					if (list.size() > 0) {
+						commitOffset += list.size();
 						sendData(list);
+					}else{
+						if(nullcount > 10){
+							LOG.error(_conf.getTopics() +" : "+_partition+" has :"+nullcount*_conf.getNodataInterval() +" mins no data to send.");
+						}
+						Thread.sleep(_conf.getNodataInterval()*1000*60);
+						nullcount++;
 					}
-					System.out.println("%%%%%%%%%%%%%%%%%%%%%%%%%%%%%");
 					break;
 				}
 				numMessages += 1;
-				System.out.println(new String(Utils.toByteArray(toEmit
-						.message().payload())));
-				KeyedMessage<String, Message> data = new KeyedMessage<String, Message>(
-						_conf.getTargetTopic(), toEmit.message());
+//				LOG.info(new String(toByteArray(toEmit.message().payload())));
+				
+				
+				KeyedMessage<String, String> data = new KeyedMessage<String, String>(
+						_conf.getTargetTopic(), numMessages +"",new String(toByteArray(toEmit.message().payload()),"UTF-8"));
 				list.add(data);
-
+				payloadCount += toEmit.message().payloadSize(); 
 				if (list.size() == ProducerConf.BATCH_NUM_VALUE) {
+					commitOffset += ProducerConf.BATCH_NUM_VALUE;
 					sendData(list);
 					numMessages = 0;
+					
 				}
 			}
 		}
+		}catch(Exception e){
+			e.printStackTrace();
+		}
 	}
+	
+	 public static byte[] toByteArray(ByteBuffer buffer) {
+	        byte[] ret = new byte[buffer.remaining()];
+	        buffer.get(ret, 0, ret.length);
+	        return ret;
+	 }
 
 }

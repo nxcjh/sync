@@ -18,7 +18,7 @@
 package com.autohome.sync.syncCluster.consumers;
 
 import com.google.common.base.Objects;
-import storm.trident.spout.ISpoutPartition;
+
 
 
 public class Partition implements ISpoutPartition {

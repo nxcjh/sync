@@ -3,9 +3,11 @@ package com.autohome.sync.syncCluster.consumers;
 import java.io.IOException;
 import java.net.ConnectException;
 import java.net.SocketTimeoutException;
+import java.nio.ByteBuffer;
 import java.nio.channels.UnresolvedAddressException;
 import java.util.HashMap;
 import java.util.Map;
+
 
 
 
@@ -131,7 +133,8 @@ public class KafkaUtils {
 		return "/sync/topics/ids";
 	}
 	
-	
+	 
+	 
 	public static void main(String[] args) {
 		
 	}

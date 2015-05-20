@@ -18,9 +18,16 @@ public class Configuration {
 	public  String topologyInstanceId = "";
 	public  long refreshFreqSecs = 60;
 	public String targetTopic;
+	public long nodataInterval = 2;
 	
 	
 
+	public long getNodataInterval() {
+		return nodataInterval;
+	}
+	public void setNodataInterval(long nodataInterval) {
+		this.nodataInterval = nodataInterval;
+	}
 	public String getTargetTopic() {
 		return targetTopic;
 	}
