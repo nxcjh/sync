@@ -25,9 +25,9 @@ import kafka.producer.KeyedMessage;
 public class ConsumerReplica implements Runnable {
 
 	private Long _emittedToOffset; // 从kafka读到的offset,
-							// 从kafka读到的messages会放入_waitingToEmit,放入这个list,
-							// 我们就认为一定会被emit,
-							// 所以emittedToOffset可以认为是从kafka读到的offset.
+	// 从kafka读到的messages会放入_waitingToEmit,放入这个list,
+	// 我们就认为一定会被emit,
+	// 所以emittedToOffset可以认为是从kafka读到的offset.
 	private Long _committedTo; // 已经写入zk的offset
 	private LinkedList<MessageAndOffset> _waitingToEmit = new LinkedList<MessageAndOffset>();
 	private int _partition;
@@ -50,7 +50,8 @@ public class ConsumerReplica implements Runnable {
 	 * @param partitionid
 	 * @param _reader
 	 */
-	public ConsumerReplica(ConsumerServer server,Map<Integer, ConnectionInfo> connections,int partitionid,
+	public ConsumerReplica(ConsumerServer server,
+			Map<Integer, ConnectionInfo> connections, int partitionid,
 			DynamicBrokersReader reader, Configuration conf) {
 		_partition = partitionid;
 		_conf = conf;
@@ -58,7 +59,7 @@ public class ConsumerReplica implements Runnable {
 		path = committedPath(); // 存储offset的zk路径
 		_consumer = connections.get(partitionid).consumer; // 获取SimpleConsumer
 		try {
-			_curoffset = _reader.fetchOffset(path);//获取zk上面保存的offset
+			_curoffset = _reader.fetchOffset(path);// 获取zk上面保存的offset
 			if (_curoffset != null) {
 				currentOffset = Long.parseLong(_curoffset); // 把zk上保存的offset写入本地缓存
 			} else {
@@ -67,14 +68,16 @@ public class ConsumerReplica implements Runnable {
 						_conf.getTopics(), _partition,
 						_conf.getStartOffsetTime());
 			}
-			System.out.println(("Read partition offset from: " + path + "  --> " + currentOffset));
+			System.out.println(("Read partition offset from: " + path
+					+ "  --> " + currentOffset));
 		} catch (Throwable e) {
-			System.out.println("Error reading and/or parsing at ZkNode: " + path + "\n" + e.getMessage());
-			for(int triesnum=1; triesnum<4; triesnum++){
+			System.out.println("Error reading and/or parsing at ZkNode: "
+					+ path + "\n" + e.getMessage());
+			for (int triesnum = 1; triesnum < 4; triesnum++) {
 				triesnum += 1;
-				try{
+				try {
 					Thread.sleep(5000);
-					_curoffset = _reader.fetchOffset(path);//获取zk上面保存的offset
+					_curoffset = _reader.fetchOffset(path);// 获取zk上面保存的offset
 					if (_curoffset != null) {
 						currentOffset = Long.parseLong(_curoffset); // 把zk上保存的offset写入本地缓存
 					} else {
@@ -83,19 +86,20 @@ public class ConsumerReplica implements Runnable {
 								_conf.getTopics(), _partition,
 								_conf.getStartOffsetTime());
 					}
-				}catch (Throwable ex) {
-					//尝试3次失败, 进行重新初始化
-					if(triesnum == 4){
+				} catch (Throwable ex) {
+					// 尝试3次失败, 进行重新初始化
+					if (triesnum == 4) {
 						server.shutdown();
 					}
-					System.out.println("Retry reading and/or parsing at ZkNode: " + path + " for "+triesnum+" times \n");
+					System.out
+							.println("Retry reading and/or parsing at ZkNode: "
+									+ path + " for " + triesnum + " times \n");
 				}
 			}
 		}
 
 		long earliestOffset = KafkaUtils.getOffset(_consumer,
-				_conf.getTopics(), _partition,
-				_conf.getStartOffsetTime());// ConsumerConfig.startOffsetTime
+				_conf.getTopics(), _partition, _conf.getStartOffsetTime());// ConsumerConfig.startOffsetTime
 		/**
 		 * 如果从zk中读取到的currentOffset比partition中的earlyOffset小, 则进行置换
 		 */
@@ -116,7 +120,7 @@ public class ConsumerReplica implements Runnable {
 	 * 从kafka上消费数据
 	 */
 	private void fill() {
-		long currTime = System.currentTimeMillis();//当前时间毫秒数
+		long currTime = System.currentTimeMillis();// 当前时间毫秒数
 		_committedTo = currentOffset;
 		// 按60秒对offset进行更新
 		if (currTime > lastRefreshTimeMs + refreshMillis) {
@@ -127,8 +131,8 @@ public class ConsumerReplica implements Runnable {
 		_committedTo = currentOffset;
 		ByteBufferMessageSet msgs = null;
 		try {
-			msgs = KafkaUtils
-					.fetchMessages(_conf,_consumer, _partition, _committedTo);
+			msgs = KafkaUtils.fetchMessages(_conf, _consumer, _partition,
+					_committedTo);
 		} catch (UpdateOffsetException e) {
 			_reader.writeBytes(path, (_committedTo + "").getBytes());
 			System.out.println("Using new offset: {}" + _emittedToOffset);
@@ -145,9 +149,6 @@ public class ConsumerReplica implements Runnable {
 
 		System.out.println("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^");
 	}
-
-
-
 
 	/**
 	 * producer发送数据
@@ -188,7 +189,6 @@ public class ConsumerReplica implements Runnable {
 				System.out.println("*********************************");
 				fill();// 开始读取message
 			}
-
 			while (true) {// numMessages <= ProducerConf.BATCH_NUM_VALUE
 				MessageAndOffset toEmit = _waitingToEmit.pollFirst();// 每次读取一条
 				if (toEmit == null) {
@@ -202,7 +202,7 @@ public class ConsumerReplica implements Runnable {
 				System.out.println(new String(Utils.toByteArray(toEmit
 						.message().payload())));
 				KeyedMessage<String, Message> data = new KeyedMessage<String, Message>(
-						"sync_1", toEmit.message());
+						_conf.getTargetTopic(), toEmit.message());
 				list.add(data);
 
 				if (list.size() == ProducerConf.BATCH_NUM_VALUE) {

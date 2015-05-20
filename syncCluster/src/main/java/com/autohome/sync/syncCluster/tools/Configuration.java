@@ -17,6 +17,16 @@ public class Configuration {
 	public  boolean useStartOffsetTimeIfOffsetOutOfRange = true;
 	public  String topologyInstanceId = "";
 	public  long refreshFreqSecs = 60;
+	public String targetTopic;
+	
+	
+
+	public String getTargetTopic() {
+		return targetTopic;
+	}
+	public void setTargetTopic(String targetTopic) {
+		this.targetTopic = targetTopic;
+	}
 	public String getZkHosts() {
 		return zkHosts;
 	}
