@@ -18,6 +18,8 @@ import java.util.Map;
 
 
 
+
+import com.autohome.sync.syncCluster.tools.Configuration;
 import com.autohome.sync.syncCluster.tools.FailedFetchException;
 import com.autohome.sync.syncCluster.tools.KafkaError;
 import com.autohome.sync.syncCluster.tools.UpdateOffsetException;
@@ -44,10 +46,10 @@ public class KafkaUtils {
 	 * @param clientName
 	 * @return
 	 */
-	 public static long getOffset(SimpleConsumer consumer, String topic, int partition) {
+	 public static long getOffset(Configuration conf , SimpleConsumer consumer, String topic, int partition) {
 	        long startOffsetTime = kafka.api.OffsetRequest.LatestTime();
-	        if (ConsumerConfig.forceFromStart) {
-	            startOffsetTime = ConsumerConfig.startOffsetTime;
+	        if (conf.isForceFromStart()) {
+	            startOffsetTime = conf.getStartOffsetTime();
 	        }
 	        return getOffset(consumer, topic, partition, startOffsetTime);
 	    }
@@ -75,12 +77,11 @@ public class KafkaUtils {
 	 
 	 
 
-	public static ByteBufferMessageSet fetchMessages(SimpleConsumer consumer,int partitionId, long offset) throws UpdateOffsetException {
+	public static ByteBufferMessageSet fetchMessages(Configuration conf, SimpleConsumer consumer,int partitionId, long offset) throws UpdateOffsetException {
 		ByteBufferMessageSet msgs = null;
-		String topic = ConsumerConfig.topics;
 		FetchRequestBuilder builder = new FetchRequestBuilder();
-		FetchRequest fetchRequest = builder.addFetch(topic, partitionId, offset, ConsumerConfig.fetchSizeBytes).
-                clientId(ConsumerConfig.clientId).maxWait(ConsumerConfig.fetchMaxWait).build();
+		FetchRequest fetchRequest = builder.addFetch(conf.getTopics(), partitionId, offset, conf.getFetchSizeBytes()).
+                clientId(conf.getClientId()).maxWait(conf.getFetchMaxWait()).build();
 		FetchResponse fetchResponse;
 		
 		try {
@@ -98,19 +99,19 @@ public class KafkaUtils {
             }
         }
         if (fetchResponse.hasError()) { // 主要处理offset outofrange的case，通过getOffset从earliest或latest读
-            KafkaError error = KafkaError.getError(fetchResponse.errorCode(topic, partitionId));
-            if (error.equals(KafkaError.OFFSET_OUT_OF_RANGE) && ConsumerConfig.useStartOffsetTimeIfOffsetOutOfRange) {
+            KafkaError error = KafkaError.getError(fetchResponse.errorCode(conf.getTopics(), partitionId));
+            if (error.equals(KafkaError.OFFSET_OUT_OF_RANGE) && conf.isUseStartOffsetTimeIfOffsetOutOfRange()) {
             	System.out.println("Got fetch request with offset out of range: [" + offset + "]; " +
                         "retrying with default start offset time from configuration. " +
-                        "configured start offset time: [" + ConsumerConfig.startOffsetTime + "]");
+                        "configured start offset time: [" + conf.getSocketTimeoutMs() + "]");
                 throw new UpdateOffsetException();//pdateOffsetException
             } else {
-                String message = "Error fetching data from [" + partitionId + "] for topic [" + topic + "]: [" + error + "]";
+                String message = "Error fetching data from [" + partitionId + "] for topic [" + conf.getTopics() + "]: [" + error + "]";
                 System.out.println(message);
                 throw new FailedFetchException(message);
             }
         } else {
-            msgs = fetchResponse.messageSet(topic, partitionId);
+            msgs = fetchResponse.messageSet(conf.getTopics(), partitionId);
            
         }
         return msgs;
@@ -120,6 +121,16 @@ public class KafkaUtils {
 	public static String getClientId(String client, String partitionid){
 		return "Client_"+client+"_"+partitionid;
 	}
+	
+
+	/**
+	 * /sync/topics/ids/[topic_name]
+	 * @return
+	 */
+	public static String getSyncTopicsPath(){
+		return "/sync/topics/ids";
+	}
+	
 	
 	public static void main(String[] args) {
 		

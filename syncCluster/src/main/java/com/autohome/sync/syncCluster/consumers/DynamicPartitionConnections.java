@@ -23,11 +23,11 @@ public class DynamicPartitionConnections {
 
 
 
-	public SimpleConsumer register(Broker host,int partition,Map<Integer, ConnectionInfo> _connections) {
-        if(!_connections.containsKey(partition)){
-        	_connections.put(partition,  new ConnectionInfo(partition,new SimpleConsumer(host.host, host.port, ConsumerConfig.socketTimeoutMs, ConsumerConfig.bufferSizeBytes, ConsumerConfig.clientId)));
-        }
-        ConnectionInfo info = _connections.get(partition);
-        return info.consumer;
-    }
+//	public SimpleConsumer register(Broker host,int partition,Map<Integer, ConnectionInfo> _connections) {
+//        if(!_connections.containsKey(partition)){
+//        	_connections.put(partition,  new ConnectionInfo(partition,new SimpleConsumer(host.host, host.port, ConsumerConfig.socketTimeoutMs, ConsumerConfig.bufferSizeBytes, ConsumerConfig.clientId)));
+//        }
+//        ConnectionInfo info = _connections.get(partition);
+//        return info.consumer;
+//    }
 }
